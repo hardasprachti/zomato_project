@@ -296,29 +296,38 @@ This prints a device-authorization URL (`https://vercel.com/oauth/device?user_co
 ```bash
 npx vercel --cwd landing --prod --yes
 ```
-This deploys `landing/` straight from disk — it does **not** depend on a git connection, which is why it succeeded even though GitHub linking failed (see Known Issue below).
+This deploys `landing/` straight from disk — it does **not** depend on a git connection, which is why it succeeded even though GitHub linking failed at the time (see D6.4 below).
 
-### Known issue: GitHub repo not linkable
+### D6.4 — GitHub import eventually succeeded, but with the wrong root directory
 
-During deploy, Vercel attempted to auto-connect the GitHub repo and failed:
+On the first attempt (D6.2/D6.3), Vercel's dashboard **Import Git Repository** flow couldn't see the repo at all, and the CLI deploy's own auto-connect attempt failed outright:
 ```
 Error: Failed to connect the GitHub repository hardasprachti/zomato_project.
 Error: You need admin or write access to the repository "zomato_project" to link it. (400)
 ```
-Root cause: the GitHub account connected to this Vercel account doesn't have write access to `hardasprachti/zomato_project` — the same account-identity mismatch encountered earlier when pushing to GitHub (D0.3 originally targeted a different GitHub identity than the one with push access). This is **not blocking** — the CLI deploy above works independent of any git link.
+Root cause: the GitHub account connected to this Vercel account didn't have write access to `hardasprachti/zomato_project` — the same account-identity mismatch hit earlier when pushing to GitHub (D0.3 originally targeted a different GitHub identity than the one with push access). Working around this at the time meant deploying straight from the local `landing/` folder (D6.2/D6.3), independent of any git link — that produced the `landing` project (`https://landing-gamma-azure-57.vercel.app`).
 
-**Consequence:** future edits to `landing/index.html` will **not** auto-deploy on `git push` the way Railway does. To publish an update, either:
-- Re-run `npx vercel --cwd landing --prod --yes` from the project root, or
-- Fix the access mismatch (grant the Vercel-linked GitHub account write access to the repo) and run `vercel git connect --cwd landing` to wire up auto-deploy.
+Later, once GitHub access was sorted out, importing the repo from the Vercel dashboard worked — but it created a **second, separate project** named `zomato-project` (auto-named after the repo), deployed from the **repo root** by default. Since `index.html` only exists in `landing/`, not the repo root, every deploy of that project 404'd with "This page could not be found."
+
+Fixed via CLI, without touching the dashboard:
+```bash
+npx vercel project update zomato-project --root-directory landing --yes
+npx vercel redeploy zomato-project-eight.vercel.app --target production
+```
 
 ### Result
 
-| | |
-|---|---|
-| Account/scope | `prachiti18061990-3762` (personal team, auto-named from the Vercel account email) |
-| Project name | `landing` |
-| Production URL | `https://landing-gamma-azure-57.vercel.app` |
-| Verified | `curl` returned `HTTP 200` with the expected HTML on first deploy |
+Two Vercel projects now exist under the same account; **`zomato-project` is the one to use** — it's git-connected and auto-deploys on every push to `main`, matching how Railway behaves.
+
+| | `zomato-project` (canonical) | `landing` (earlier manual deploy) |
+|---|---|---|
+| Production URL | `https://zomato-project-eight.vercel.app` | `https://landing-gamma-azure-57.vercel.app` |
+| Git-connected | Yes — auto-deploys on `git push` | No — requires manually re-running `vercel --cwd landing --prod --yes` |
+| Root directory | `landing` (set explicitly via `--root-directory`) | N/A (deployed directly from that folder) |
+
+The `landing` project still works but is now redundant — it can be left alone (no cost, no maintenance burden) or deleted with `vercel project remove landing` if you'd rather not have two projects serving the same page. Either way, **use the `zomato-project` URL going forward** and treat `landing` as a fallback.
+
+Account/scope for both: `prachiti18061990-3762` (personal team, auto-named from the Vercel account email). Verified via `curl` — `HTTP 200` with the expected HTML.
 
 ### If you want a real functional split later
 
@@ -331,9 +340,10 @@ Flag this separately when you're ready — it's a meaningfully different scope t
 ### ✅ Phase D6 Checklist
 - [x] `landing/index.html` created and pushed to GitHub
 - [x] Vercel CLI login completed
+- [x] `zomato-project` (git-connected) root directory fixed to `landing`; confirmed `HTTP 200` after redeploy
 - [x] Deployed to production via `vercel --cwd landing --prod --yes`
 - [x] Live URL verified (`HTTP 200`)
-- [ ] GitHub auto-deploy connection (optional — currently manual redeploy only, see Known Issue above)
+- [x] GitHub auto-deploy connection — `zomato-project` is git-connected and redeploys automatically on push to `main`
 
 ---
 
