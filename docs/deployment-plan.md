@@ -1,5 +1,5 @@
 # Deployment Plan
-## AI-Powered Restaurant Recommendation System — Railway Deployment
+## AI-Powered Restaurant Recommendation System — Railway (App) + Vercel (Landing Page)
 
 ---
 
@@ -13,7 +13,7 @@
 6. [Phase D3 — Environment Variables on Railway](#phase-d3--environment-variables-on-railway)
 7. [Phase D4 — Post-Deploy Verification](#phase-d4--post-deploy-verification)
 8. [Phase D5 — Domain, Monitoring & Ongoing Ops](#phase-d5--domain-monitoring--ongoing-ops)
-9. [Why Not Vercel (and the future path if that changes)](#9-why-not-vercel-and-the-future-path-if-that-changes)
+9. [Phase D6 — Landing Page Deployment on Vercel](#phase-d6--landing-page-deployment-on-vercel)
 10. [Rollback & Redeploy](#10-rollback--redeploy)
 11. [Deployment Checklist Summary](#11-deployment-checklist-summary)
 
@@ -23,11 +23,11 @@
 
 This project is currently a **single Streamlit application** ([app/streamlit_app.py](../app/streamlit_app.py)) — the UI and the recommendation logic (`src/filter.py`, `src/prompt_builder.py`, `src/llm_client.py`) run in one Python process. There is no separate REST API and no standalone JS/React frontend.
 
-**Decision: deploy the entire app to Railway as one service. Vercel is not used in this plan.**
+**Decision: the working app deploys to Railway as one service. Vercel hosts a separate static landing page only — not a functional frontend.**
 
-Why: Streamlit needs a persistent, stateful server process (it holds a WebSocket connection per session for live interactivity). Vercel's hosting model is built for static sites and short-lived serverless functions — it cannot run a long-lived Streamlit server. Railway runs arbitrary containers/processes continuously, which is exactly what Streamlit needs. Splitting this into a separate frontend (Vercel) and backend (Railway) would require rebuilding the UI as a standalone web frontend calling a new REST API — that's a feature-build project, not a deployment task, and is explicitly out of scope here (see [§9](#9-why-not-vercel-and-the-future-path-if-that-changes) for that path if you want it later).
+Why: Streamlit needs a persistent, stateful server process (it holds a WebSocket connection per session for live interactivity). Vercel's hosting model is built for static sites and short-lived serverless functions — it cannot run a long-lived Streamlit server. Railway runs arbitrary containers/processes continuously, which is exactly what Streamlit needs. A later addition (see [Phase D6](#phase-d6--landing-page-deployment-on-vercel)) put the static Google Stitch design mockup on Vercel as a visual/marketing page — it has no real search, filtering, or API wiring, and is separate from the working app. An actual functional split (real frontend calling a real backend API, both live) would require rebuilding the UI as a standalone web frontend calling a new REST API — that's a feature-build project, not a deployment task, and is explicitly out of scope here (see [Phase D6](#phase-d6--landing-page-deployment-on-vercel) for that path if you want it later).
 
-**End state:** one Railway service, serving the Streamlit app publicly over HTTPS on a Railway-provided (or custom) domain, with API keys stored as Railway environment variables.
+**End state:** one Railway service, serving the Streamlit app publicly over HTTPS on a Railway-provided (or custom) domain, with API keys stored as Railway environment variables — plus a static landing page on Vercel.
 
 ---
 
@@ -266,15 +266,74 @@ Two variable costs to watch:
 
 ---
 
-## 9. Why Not Vercel (and the future path if that changes)
+## Phase D6 — Landing Page Deployment on Vercel
 
-Vercel isn't part of this deployment because there's currently nothing in this repo shaped like a Vercel deployment — no Next.js/React/static frontend, no serverless API routes. The `Google_sticth_design/` folder contains a static Tailwind-CDN HTML mockup used as the *visual reference* for the Streamlit app's current theme (compare its Material-color CSS tokens to `DESIGN_CSS` in [streamlit_app.py](../app/streamlit_app.py)) — it has no real data wiring (hardcoded placeholder values, no fetch calls) and isn't a deployable product surface on its own.
+**Goal:** Deploy the static Google Stitch design mockup to Vercel as a standalone visual/marketing page. This is **not** a functional frontend — no real search, filtering, or API calls; it's the design reference only. The actual working app remains the Streamlit deploy on Railway (D0–D5).
 
-If you later want an actual split — a polished static/React frontend on Vercel talking to a real backend on Railway — that's a build, not a deploy step, and would mean:
-1. Wrapping `src/filter.py`, `src/prompt_builder.py`, `src/llm_client.py` in a FastAPI (or similar) app exposing JSON endpoints, deployed to Railway.
-2. Building an actual frontend (e.g. from the Stitch mockup, wired to real state and fetch calls) deployed to Vercel, calling that API.
+### What's deployed
+
+`landing/index.html` — a verbatim copy of `Google_sticth_design/foodai_ai_restaurant_discovery/code.html`. It's fully self-contained: Tailwind loaded from `cdn.tailwindcss.com`, fonts from Google Fonts, images from `lh3.googleusercontent.com` — no local asset dependencies, no build step needed.
+
+### Steps actually used
+
+#### D6.1 — Prepare the static folder
+```bash
+mkdir -p landing
+cp "Google_sticth_design/foodai_ai_restaurant_discovery/code.html" "landing/index.html"
+git add landing/
+git commit -m "Add landing/ static page for Vercel deployment"
+git push origin main
+```
+
+#### D6.2 — Sign in to Vercel via CLI
+The dashboard's **Import Git Repository** flow did not show the repo, even after authenticating and installing the Vercel GitHub App. The CLI path bypasses that entirely:
+```bash
+npx vercel login <your-email>
+```
+This prints a device-authorization URL (`https://vercel.com/oauth/device?user_code=XXXX-XXXX`) — open it and confirm the code to complete sign-in.
+
+#### D6.3 — Deploy directly from the local folder
+```bash
+npx vercel --cwd landing --prod --yes
+```
+This deploys `landing/` straight from disk — it does **not** depend on a git connection, which is why it succeeded even though GitHub linking failed (see Known Issue below).
+
+### Known issue: GitHub repo not linkable
+
+During deploy, Vercel attempted to auto-connect the GitHub repo and failed:
+```
+Error: Failed to connect the GitHub repository hardasprachti/zomato_project.
+Error: You need admin or write access to the repository "zomato_project" to link it. (400)
+```
+Root cause: the GitHub account connected to this Vercel account doesn't have write access to `hardasprachti/zomato_project` — the same account-identity mismatch encountered earlier when pushing to GitHub (D0.3 originally targeted a different GitHub identity than the one with push access). This is **not blocking** — the CLI deploy above works independent of any git link.
+
+**Consequence:** future edits to `landing/index.html` will **not** auto-deploy on `git push` the way Railway does. To publish an update, either:
+- Re-run `npx vercel --cwd landing --prod --yes` from the project root, or
+- Fix the access mismatch (grant the Vercel-linked GitHub account write access to the repo) and run `vercel git connect --cwd landing` to wire up auto-deploy.
+
+### Result
+
+| | |
+|---|---|
+| Account/scope | `prachiti18061990-3762` (personal team, auto-named from the Vercel account email) |
+| Project name | `landing` |
+| Production URL | `https://landing-gamma-azure-57.vercel.app` |
+| Verified | `curl` returned `HTTP 200` with the expected HTML on first deploy |
+
+### If you want a real functional split later
+
+The above is a static mockup, not a working product surface. An actual frontend/backend split — a real frontend on Vercel calling a real backend API — is a build, not a deploy step:
+1. Wrap `src/filter.py`, `src/prompt_builder.py`, `src/llm_client.py` in a FastAPI (or similar) app exposing JSON endpoints, deployed to Railway.
+2. Build an actual frontend (e.g. starting from the Stitch mockup, wired to real state and fetch calls) deployed to Vercel, calling that API.
 
 Flag this separately when you're ready — it's a meaningfully different scope than this plan.
+
+### ✅ Phase D6 Checklist
+- [x] `landing/index.html` created and pushed to GitHub
+- [x] Vercel CLI login completed
+- [x] Deployed to production via `vercel --cwd landing --prod --yes`
+- [x] Live URL verified (`HTTP 200`)
+- [ ] GitHub auto-deploy connection (optional — currently manual redeploy only, see Known Issue above)
 
 ---
 
@@ -296,6 +355,7 @@ Flag this separately when you're ready — it's a meaningfully different scope t
 | **D3** | Secrets in Railway, not in git | App runs but every LLM call fails with an auth error |
 | **D4** | Verify live behavior | Silent regressions vs. the locally-tested Phase 5 build |
 | **D5** | Domain + ongoing ops awareness | Unbounded LLM spend if traffic spikes unexpectedly |
+| **D6** | Static landing page live on Vercel | N/A — cosmetic/marketing surface, not the working app |
 
 ---
 
